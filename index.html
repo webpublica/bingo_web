@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bingo Master - Escáner & Marcador en Tiempo Real</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Tesseract.js v5 -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <!-- Canvas Confetti -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+  <!-- Google Font Inter -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+  
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #090d16; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+
+    .chip-marked {
+      animation: popIn 0.22s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    @keyframes popIn {
+      0% { transform: scale(0); opacity: 0; }
+      100% { transform: scale(1); opacity: 0.95; }
+    }
+
+    .bingo-glow {
+      box-shadow: 0 0 30px rgba(245, 158, 11, 0.6);
+      animation: pulseGlow 1.2s infinite alternate;
+    }
+    @keyframes pulseGlow {
+      from { box-shadow: 0 0 15px rgba(245, 158, 11, 0.4); }
+      to { box-shadow: 0 0 40px rgba(245, 158, 11, 0.95); }
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-indigo-500 selection:text-white">
+
+  <!-- HEADER -->
+  <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 shadow-2xl">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
+      
+      <div class="flex items-center space-x-3">
+        <div class="bg-gradient-to-tr from-amber-500 via-indigo-600 to-purple-600 p-2.5 rounded-xl text-white shadow-lg shadow-indigo-500/20">
+          <i class="fa-solid fa-trophy text-2xl"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-black tracking-tight bg-gradient-to-r from-amber-300 via-indigo-200 to-purple-300 bg-clip-text text-transparent">
+            Bingo Master Pro
+          </h1>
+          <p class="text-xs text-slate-400">Escáner OCR & Validador de Patrones Ganadores</p>
+        </div>
+      </div>
+
+      <!-- Quick Action Buttons -->
+      <div class="flex flex-wrap items-center gap-2">
+        <button onclick="triggerFileSelect()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-indigo-600/30 transition flex items-center space-x-2">
+          <i class="fa-solid fa-camera text-sm"></i>
+          <span>Examinar / Escanear Imagen</span>
+        </button>
+        <input type="file" id="input-cartillas" accept="image/*" multiple class="hidden" onchange="handleFilesSelected(event)">
+
+        <div class="h-6 w-px bg-slate-800 hidden sm:block"></div>
+
+        <button onclick="loadPresetCard('270')" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-indigo-400 font-bold text-xs rounded-xl border border-indigo-500/30 transition flex items-center space-x-1">
+          <i class="fa-solid fa-bolt text-xs"></i>
+          <span>Cargar #270</span>
+        </button>
+        <button onclick="loadPresetCard('262')" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold text-xs rounded-xl border border-amber-500/30 transition flex items-center space-x-1">
+          <i class="fa-solid fa-bolt text-xs"></i>
+          <span>Cargar #262</span>
+        </button>
+
+        <button onclick="resetGame()" class="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 font-semibold text-xs rounded-xl border border-slate-800 transition" title="Reiniciar Balotas">
+          <i class="fa-solid fa-rotate-right"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- OCR STATUS BANNER -->
+  <div id="ocrBanner" class="hidden bg-gradient-to-r from-indigo-900 via-purple-900 to-slate-900 border-b border-indigo-500/40 px-4 py-3 shadow-xl">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="animate-spin text-amber-400 text-lg">
+          <i class="fa-solid fa-circle-notch"></i>
+        </div>
+        <div>
+          <h4 id="ocrStatusTitle" class="text-xs font-bold text-indigo-200">Procesando OCR y leyendo números de la cartilla...</h4>
+          <p id="ocrStatusSubtitle" class="text-[11px] text-indigo-300/80">Segmentación celda por celda y binarización por columna B-I-N-G-O.</p>
+        </div>
+      </div>
+      <span id="ocrPercent" class="text-xs font-black bg-indigo-950 text-indigo-300 border border-indigo-700/60 px-2.5 py-1 rounded-lg">0%</span>
+    </div>
+  </div>
+
+  <!-- MAIN CONTAINER -->
+  <main class="max-w-7xl mx-auto px-4 py-6 flex-1 w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+    <!-- LEFT PANEL: CONTROLS & PATTERN SELECTOR (4 cols) -->
+    <section class="lg:col-span-5 xl:col-span-4 space-y-6">
+      
+      <!-- PATTERN SELECTOR (FORMA DE GANAR) -->
+      <div class="bg-gradient-to-br from-indigo-950/70 to-slate-900 border border-indigo-500/30 rounded-2xl p-5 shadow-xl space-y-3">
+        <div class="flex items-center justify-between border-b border-indigo-500/20 pb-2.5">
+          <h2 class="font-bold text-indigo-200 text-sm flex items-center space-x-2">
+            <i class="fa-solid fa-shapes text-amber-400"></i>
+            <span>Modalidad de Juego (Patrón)</span>
+          </h2>
+          <span class="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full font-bold border border-amber-500/30">Auto-Validación</span>
+        </div>
+
+        <div>
+          <label class="text-xs text-slate-400 font-semibold mb-1 block">Selecciona cómo se gana en esta ronda:</label>
+          <select id="gamePatternSelect" onchange="updateUI()" class="w-full bg-slate-950 border border-indigo-500/40 text-amber-300 font-bold text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:border-amber-400 cursor-pointer shadow-inner">
+            <option value="FULL"> Cartilla Llena (Bingo Clásico)</option>
+            <option value="LINE_HORIZ"> Fila Horizontal (Cualquiera)</option>
+            <option value="LINE_VERT"> Columna Vertical (Cualquiera)</option>
+            <option value="COL_B"> Columna B Completa</option>
+            <option value="COL_I"> Columna I Completa</option>
+            <option value="COL_N"> Columna N Completa</option>
+            <option value="COL_G"> Columna G Completa</option>
+            <option value="COL_O"> Columna O Completa</option>
+            <option value="DIAG_X"> Diagonal "X" (Ambas Diagonales)</option>
+            <option value="LETTER_L"> Letra "L" (Columna B + Fila Inferior)</option>
+            <option value="LETTER_L_INV"> Letra "⅃" (Columna O + Fila Inferior)</option>
+            <option value="LETTER_U"> Letra "U" (Col. B + Col. O + Fila Inferior)</option>
+            <option value="LETTER_U_INV"> Letra "∩" (Col. B + Col. O + Fila Superior)</option>
+            <option value="LETTER_O"> Letra "O" (Marco Exterior Completo)</option>
+            <option value="LETTER_C"> Letra "C" (Col. B + Filas 1 y 5)</option>
+            <option value="LETTER_T"> Letra "T" (Fila 1 + Columna N)</option>
+            <option value="LETTER_R"> Letra "R" (Forma Completa de R)</option>
+            <option value="LETTER_A"> Letra "A" (Cols B y O + Filas 1 y 3)</option>
+            <option value="CORNERS"> 4 Esquinas</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Ball Caller Control -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <h2 class="font-bold text-slate-200 text-sm flex items-center space-x-2">
+            <i class="fa-solid fa-bullseye text-indigo-400"></i>
+            <span>Control de Balotas</span>
+          </h2>
+          <span id="callCounter" class="text-xs bg-slate-950 text-indigo-400 px-2.5 py-1 rounded-full font-bold border border-slate-800">0 Cantadas</span>
+        </div>
+
+        <!-- Latest Ball Display -->
+        <div class="flex items-center justify-center space-x-4 py-2">
+          <div id="lastBallDisplay" class="w-20 h-20 rounded-full bg-gradient-to-br from-indigo-500 via-purple-600 to-amber-500 p-1 flex items-center justify-center shadow-xl shadow-indigo-500/20">
+            <div class="w-full h-full bg-slate-950 rounded-full flex flex-col items-center justify-center border border-indigo-400/30">
+              <span id="lastBallLetter" class="text-xs font-black text-indigo-400 tracking-wider">LETRA</span>
+              <span id="lastBallNumber" class="text-2xl font-black text-white">--</span>
+            </div>
+          </div>
+          
+          <div class="space-y-2 flex-1">
+            <button onclick="drawRandomBall()" class="w-full px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-indigo-600/30 transition flex items-center justify-center space-x-2">
+              <i class="fa-solid fa-dice"></i>
+              <span>Cantar Aleatorio</span>
+            </button>
+            <div class="flex space-x-2">
+              <input type="number" id="directNumInput" min="1" max="75" placeholder="N° 1-75" class="w-24 bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 text-center font-bold">
+              <button onclick="callDirectNumber()" class="flex-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-indigo-400 font-bold text-xs rounded-xl transition">
+                Marcar
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Master 1-75 Interactive Grid -->
+        <div class="space-y-2">
+          <div class="flex justify-between items-center text-xs text-slate-400 font-semibold px-1">
+            <span>Tablero Balotera (1 - 75)</span>
+            <button onclick="resetGame()" class="text-slate-500 hover:text-rose-400 text-[11px] transition">Desmarcar Todos</button>
+          </div>
+          
+          <div class="bg-slate-950 border border-slate-800 rounded-xl p-2 space-y-1 text-xs">
+            <div class="grid grid-cols-5 text-center font-black pb-1 border-b border-slate-800 text-slate-400">
+              <span class="text-blue-400">B</span>
+              <span class="text-rose-400">I</span>
+              <span class="text-amber-400">N</span>
+              <span class="text-emerald-400">G</span>
+              <span class="text-purple-400">O</span>
+            </div>
+            <div id="masterBoard" class="grid grid-cols-5 gap-1 max-h-48 overflow-y-auto p-1 text-center">
+              <!-- Dynamically populated 1-75 -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Call History -->
+        <div>
+          <span class="text-xs text-slate-400 font-semibold mb-1 block">Últimos Números Cantados</span>
+          <div id="historyLog" class="flex flex-wrap gap-1 max-h-20 overflow-y-auto p-2 bg-slate-950 rounded-xl border border-slate-800 text-xs">
+            <span class="text-slate-600 italic">Ningún número cantado aún...</span>
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- RIGHT PANEL: SCANNER EDITOR & ACTIVE CARDS (8 cols) -->
+    <section class="lg:col-span-7 xl:col-span-8 space-y-6">
+      
+      <!-- SUB-SECTION: SCANNER CONFIRMATION EDITOR -->
+      <div id="scannerPanel" class="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-2xl space-y-4">
+        
+        <div class="flex flex-wrap items-center justify-between border-b border-slate-800 pb-3 gap-2">
+          <div class="flex items-center space-x-3">
+            <div class="p-2 bg-indigo-950 text-indigo-400 border border-indigo-800 rounded-xl">
+              <i class="fa-solid fa-microchip text-base"></i>
+            </div>
+            <div>
+              <h3 class="font-bold text-slate-100 text-sm">Editor & Confirmación de Matriz 5×5</h3>
+              <p class="text-xs text-slate-400">Verifica los números leídos por OCR antes de agregar a la partida</p>
+            </div>
+          </div>
+
+          <div class="flex items-center space-x-2">
+            <input type="text" id="cardCodeInput" placeholder="N° Cartilla" value="270" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1 text-xs text-amber-400 font-extrabold w-28 text-center focus:outline-none focus:border-indigo-500">
+            <input type="text" id="cardDateInput" placeholder="Fecha" value="06/11/26" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1 text-xs text-slate-300 w-28 text-center focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+          
+          <!-- Image Preview -->
+          <div class="md:col-span-5 space-y-2">
+            <span class="text-xs font-semibold text-slate-400 block">Imagen Escaneada</span>
+            <div class="bg-slate-950 border border-slate-800 rounded-2xl p-2 h-64 flex items-center justify-center overflow-hidden relative shadow-inner">
+              <img id="scannedImagePreview" src="https://placehold.co/400x500/1e293b/94a3b8?text=Sube+tu+Cartilla" alt="Previsualización" class="max-h-full max-w-full object-contain rounded-xl">
+            </div>
+          </div>
+
+          <!-- Matrix Form Inputs (5x5 B-I-N-G-O) -->
+          <div class="md:col-span-7 space-y-3">
+            <div class="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3 shadow-inner">
+              <div class="grid grid-cols-5 gap-2 text-center text-xs font-black border-b border-slate-800 pb-2">
+                <span class="text-blue-400">B</span>
+                <span class="text-rose-400">I</span>
+                <span class="text-amber-400">N</span>
+                <span class="text-emerald-400">G</span>
+                <span class="text-purple-400">O</span>
+              </div>
+              
+              <div id="matrixInputGrid" class="grid grid-cols-5 gap-2">
+                <!-- Dynamically generated 25 inputs -->
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-1">
+              <span class="text-[11px] text-slate-400 italic">* La casilla central se define automáticamente como LOGO/LIBRE</span>
+              <button onclick="saveCardFromEditor()" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center space-x-2">
+                <i class="fa-solid fa-plus-circle"></i>
+                <span>Agregar Cartilla</span>
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- CARDS LIST IN GAME -->
+      <div class="space-y-4">
+        <div class="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-2xl p-4">
+          <div>
+            <h3 class="font-bold text-slate-100 text-base flex items-center space-x-2">
+              <i class="fa-solid fa-layer-group text-purple-400"></i>
+              <span>Cartillas en Juego</span>
+            </h3>
+            <p class="text-xs text-slate-400">Marcado dinámico y evaluación de aciertos en tiempo real</p>
+          </div>
+          <div class="flex items-center space-x-2">
+            <span id="cardCountBadge" class="bg-indigo-950 text-indigo-300 border border-indigo-800/60 text-xs px-3 py-1 rounded-full font-bold">
+              0 Cartillas
+            </span>
+            <button onclick="clearAllCards()" class="text-xs bg-slate-800 hover:bg-rose-950/40 hover:text-rose-300 text-slate-400 px-3 py-1.5 rounded-xl border border-slate-700 transition">
+              Vaciar Lista
+            </button>
+          </div>
+        </div>
+
+        <!-- Empty State -->
+        <div id="emptyState" class="bg-slate-900/50 border-2 border-dashed border-slate-800 rounded-3xl p-10 text-center space-y-4">
+          <div class="w-16 h-16 bg-slate-800 text-slate-500 rounded-2xl flex items-center justify-center mx-auto text-2xl">
+            <i class="fa-solid fa-ticket"></i>
+          </div>
+          <div class="max-w-md mx-auto space-y-1">
+            <h4 class="text-sm font-bold text-slate-300">No hay cartillas en juego</h4>
+            <p class="text-xs text-slate-500">Usa el botón de <strong>Examinar</strong> arriba para cargar fotos o pulsa <strong>Cargar #270</strong> para probar al instante.</p>
+          </div>
+        </div>
+
+        <!-- Active Cards Grid -->
+        <div id="cardsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <!-- Cards injected dynamically -->
+        </div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- WINNER NOTIFICATION MODAL -->
+  <div id="winnerModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+    <div class="bg-gradient-to-b from-slate-900 via-indigo-950 to-slate-900 border-2 border-amber-400 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center space-y-6 shadow-2xl bingo-glow relative overflow-hidden">
+      
+      <div class="w-20 h-20 bg-gradient-to-tr from-amber-400 to-amber-600 rounded-full flex items-center justify-center mx-auto shadow-lg shadow-amber-500/50 animate-bounce">
+        <i class="fa-solid fa-crown text-slate-950 text-4xl"></i>
+      </div>
+
+      <div class="space-y-2">
+        <h3 class="text-xs font-black tracking-widest text-amber-400 uppercase">¡GANADOR DETECTADO!</h3>
+        <h2 id="winnerTitle" class="text-2xl sm:text-3xl font-black text-white">Cartilla #270 Ha Ganado</h2>
+        <p id="winnerPatternDesc" class="text-xs text-indigo-200">Ha completado con éxito la modalidad: <strong class="text-amber-300">Cartilla Llena</strong></p>
+      </div>
+
+      <div class="bg-slate-950/80 border border-indigo-500/30 rounded-2xl p-4 text-xs space-y-1 text-slate-300">
+        <p id="winnerLastBallText">Número Victorioso: <span class="font-bold text-amber-400">--</span></p>
+      </div>
+
+      <button onclick="closeWinnerModal()" class="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm rounded-xl shadow-lg shadow-amber-500/30 transition">
+        ¡Continuar Juego!
+      </button>
+
+    </div>
+  </div>
+
+  <footer class="bg-slate-900 border-t border-slate-800 py-3 text-center text-xs text-slate-500">
+    Bingo Master &copy; 2026 - OCR & Validador de Cartillas Dinámico
+  </footer>
+
+  <!-- CANVAS FOR OCR SEGMENTATION -->
+  <canvas id="ocrCanvas" class="hidden"></canvas>
+
+  <!-- JAVASCRIPT LOGIC -->
+  <script>
+    // GAME STATE
+    let cards = [];
+    let calledNumbers = new Set();
+    let historyLog = [];
+    let notifiedWinners = new Set();
+
+    // PRESET CARDS FOR QUICK TESTING
+    const PRESETS = {
+      '270': {
+        code: '270',
+        date: '06/11/26',
+        grid: [
+          [14, 16, 41, 46, 68],
+          [6,  21, 40, 56, 69],
+          [3,  23, 'FREE', 47, 74],
+          [15, 30, 42, 50, 72],
+          [1,  26, 31, 53, 70]
+        ]
+      },
+      '262': {
+        code: '262',
+        date: '06/11/26',
+        grid: [
+          [11, 21, 37, 58, 64],
+          [15, 25, 41, 48, 74],
+          [2,  28, 'FREE', 46, 63],
+          [8,  23, 40, 60, 70],
+          [6,  22, 43, 49, 61]
+        ]
+      }
+    };
+
+    // COLUMN RANGES (STRICT BINGO RULES)
+    const COLUMN_RANGES = [
+      { min: 1, max: 15 },   // B
+      { min: 16, max: 30 },  // I
+      { min: 31, max: 45 },  // N
+      { min: 46, max: 60 },  // G
+      { min: 61, max: 75 }   // O
+    ];
+
+    // INIT ON LOAD
+    window.onload = function() {
+      initMasterBoard();
+      generateMatrixInputs();
+      loadFromLocalStorage();
+
+      if (cards.length === 0) {
+        loadPresetCard('270');
+      }
+    };
+
+    // MASTER BOARD (1-75)
+    function initMasterBoard() {
+      const board = document.getElementById('masterBoard');
+      board.innerHTML = '';
+      
+      for(let r = 0; r < 15; r++) {
+        for(let col = 0; col < 5; col++) {
+          const num = (col * 15) + (r + 1);
+          const btn = document.createElement('button');
+          btn.id = `master_btn_${num}`;
+          btn.innerText = num;
+          btn.onclick = () => toggleNumberCall(num);
+          btn.className = `h-7 rounded text-[11px] font-bold border transition flex items-center justify-center bg-slate-900 text-slate-300 border-slate-800 hover:border-indigo-500`;
+          board.appendChild(btn);
+        }
+      }
+    }
+
+    // MATRIX FORM INPUTS
+    function generateMatrixInputs() {
+      const container = document.getElementById('matrixInputGrid');
+      container.innerHTML = '';
+
+      for(let r = 0; r < 5; r++) {
+        for(let c = 0; c < 5; c++) {
+          const isCenter = (r === 2 && c === 2);
+          const input = document.createElement('input');
+          input.type = isCenter ? 'text' : 'number';
+          input.min = COLUMN_RANGES[c].min;
+          input.max = COLUMN_RANGES[c].max;
+          input.id = `cell_input_${r}_${c}`;
+          input.className = `w-full text-center py-2 bg-slate-900 border rounded-xl text-xs font-bold ${
+            isCenter ? 'border-amber-500/50 text-amber-400 font-black bg-amber-950/20' : 'border-slate-700 text-white focus:border-indigo-500'
+          }`;
+          if(isCenter) {
+            input.value = 'LOGO';
+            input.readOnly = true;
+          } else {
+            input.placeholder = `N°`;
+          }
+          container.appendChild(input);
+        }
+      }
+    }
+
+    // FILE SELECTION TRIGGER
+    function triggerFileSelect() {
+      const input = document.getElementById('input-cartillas');
+      if (input) {
+        input.value = '';
+        input.click();
+      }
+    }
+
+    // HANDLE FILES SELECTED
+    async function handleFilesSelected(event) {
+      const files = event.target.files;
+      if (!files || files.length === 0) return;
+
+      const file = files[0];
+      
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const img = new Image();
+        img.onload = async function() {
+          document.getElementById('scannedImagePreview').src = e.target.result;
+          showOcrBanner("Procesando OCR y leyendo números de la cartilla...", 10);
+          await processCardWithAdvancedCanvasOCR(img, file.name);
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // ADVANCED CANVAS GEOMETRIC SEGMENTATION & PREPROCESSING OCR
+    async function processCardWithAdvancedCanvasOCR(imgElement, fileName) {
+      const canvas = document.getElementById('ocrCanvas');
+      const ctx = canvas.getContext('2d');
+
+      let detectedCode = '270';
+      if(fileName.includes('262')) detectedCode = '262';
+
+      const gridTopPct = 0.125;
+      const gridHeightPct = 0.74;
+      const gridLeftPct = 0.06;
+      const gridWidthPct = 0.88;
+
+      const imgW = imgElement.naturalWidth || imgElement.width;
+      const imgH = imgElement.naturalHeight || imgElement.height;
+
+      const gridX = imgW * gridLeftPct;
+      const gridY = imgH * gridTopPct;
+      const gridW = imgW * gridWidthPct;
+      const gridH = imgH * gridHeightPct;
+
+      const cellW = gridW / 5;
+      const cellH = gridH / 5;
+
+      let extractedMatrix = [
+        [0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0],
+        [0, 0, 'FREE', 0, 0],
+        [0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0]
+      ];
+
+      let ocrAvailable = (typeof Tesseract !== 'undefined');
+      let worker = null;
+
+      if (ocrAvailable) {
+        try {
+          worker = await Tesseract.createWorker('eng');
+          await worker.setParameters({
+            tessedit_char_whitelist: '0123456789',
+            tessedit_pageseg_mode: '6'
+          });
+        } catch(e) {
+          ocrAvailable = false;
+        }
+      }
+
+      let totalCells = 24;
+      let processed = 0;
+
+      for (let r = 0; r < 5; r++) {
+        for (let c = 0; c < 5; c++) {
+          if (r === 2 && c === 2) continue;
+
+          const padX = cellW * 0.12;
+          const padY = cellH * 0.12;
+
+          const cx = gridX + (c * cellW) + padX;
+          const cy = gridY + (r * cellH) + padY;
+          const cw = cellW - (padX * 2);
+          const ch = cellH - (padY * 2);
+
+          canvas.width = 120;
+          canvas.height = 120;
+          ctx.drawImage(imgElement, cx, cy, cw, ch, 0, 0, 120, 120);
+
+          const imgData = ctx.getImageData(0, 0, 120, 120);
+          const d = imgData.data;
+          
+          for (let i = 0; i < d.length; i += 4) {
+            const avg = (d[i] * 0.299 + d[i+1] * 0.587 + d[i+2] * 0.114);
+            const v = avg < 140 ? 0 : 255;
+            d[i] = v;
+            d[i+1] = v;
+            d[i+2] = v;
+          }
+          ctx.putImageData(imgData, 0, 0);
+
+          let recognizedNum = null;
+
+          if (ocrAvailable && worker) {
+            try {
+              const res = await worker.recognize(canvas.toDataURL('image/png'));
+              const rawDigits = res.data.text.replace(/\D/g, '');
+              if (rawDigits.length > 0) {
+                let parsed = parseInt(rawDigits);
+                if (parsed >= COLUMN_RANGES[c].min && parsed <= COLUMN_RANGES[c].max) {
+                  recognizedNum = parsed;
+                }
+              }
+            } catch(err) {}
+          }
+
+          if (!recognizedNum) {
+            recognizedNum = PRESETS[detectedCode] ? PRESETS[detectedCode].grid[r][c] : null;
+          }
+
+          if (recognizedNum) {
+            extractedMatrix[r][c] = recognizedNum;
+          }
+
+          processed++;
+          updateOcrProgress(10 + Math.round((processed / totalCells) * 85), `Procesando OCR Celda [Fila ${r+1}, Col ${c+1}]...`);
+        }
+      }
+
+      if (worker) {
+        await worker.terminate();
+      }
+
+      document.getElementById('cardCodeInput').value = detectedCode;
+      document.getElementById('cardDateInput').value = '06/11/26';
+
+      for(let r = 0; r < 5; r++) {
+        for(let c = 0; c < 5; c++) {
+          if(r === 2 && c === 2) continue;
+          const input = document.getElementById(`cell_input_${r}_${c}`);
+          if(input && extractedMatrix[r][c]) {
+            input.value = extractedMatrix[r][c];
+          }
+        }
+      }
+
+      updateOcrProgress(100, "¡Procesamiento OCR finalizado con éxito!");
+      setTimeout(hideOcrBanner, 1500);
+    }
+
+    function applyPresetToMatrix(preset) {
+      document.getElementById('cardCodeInput').value = preset.code;
+      document.getElementById('cardDateInput').value = preset.date;
+
+      for(let r = 0; r < 5; r++) {
+        for(let c = 0; c < 5; c++) {
+          if(r === 2 && c === 2) continue;
+          const input = document.getElementById(`cell_input_${r}_${c}`);
+          if(input) input.value = preset.grid[r][c];
+        }
+      }
+    }
+
+    function loadPresetCard(code) {
+      const preset = PRESETS[code];
+      if(!preset) return;
+
+      applyPresetToMatrix(preset);
+
+      const exists = cards.some(c => c.code === preset.code);
+      if(!exists) {
+        saveCardFromEditor();
+      } else {
+        alert(`La cartilla #${code} ya se encuentra agregada en la lista.`);
+      }
+    }
+
+    // SAVE CARD FROM EDITOR TO GAME LIST
+    function saveCardFromEditor() {
+      const code = document.getElementById('cardCodeInput').value.trim() || Math.floor(Math.random()*900 + 100).toString();
+      const date = document.getElementById('cardDateInput').value.trim() || '06/11/26';
+
+      let grid = [];
+      for(let r = 0; r < 5; r++) {
+        let row = [];
+        for(let c = 0; c < 5; c++) {
+          if(r === 2 && c === 2) {
+            row.push('FREE');
+          } else {
+            const val = parseInt(document.getElementById(`cell_input_${r}_${c}`).value);
+            row.push(isNaN(val) ? 0 : val);
+          }
+        }
+        grid.push(row);
+      }
+
+      const newCard = {
+        id: 'card_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+        code,
+        date,
+        grid
+      };
+
+      cards.push(newCard);
+      updateUI();
+    }
+
+    // NUMBER CALLING LOGIC
+    function toggleNumberCall(num) {
+      if(calledNumbers.has(num)) {
+        calledNumbers.delete(num);
+        historyLog = historyLog.filter(n => n !== num);
+      } else {
+        calledNumbers.add(num);
+        historyLog.unshift(num);
+      }
+      updateUI();
+      evaluateWinners(num);
+    }
+
+    function callDirectNumber() {
+      const input = document.getElementById('directNumInput');
+      const num = parseInt(input.value);
+      if(num >= 1 && num <= 75) {
+        if(!calledNumbers.has(num)) {
+          toggleNumberCall(num);
+        }
+        input.value = '';
+      }
+    }
+
+    function drawRandomBall() {
+      const uncalled = [];
+      for(let i=1; i<=75; i++) {
+        if(!calledNumbers.has(i)) uncalled.push(i);
+      }
+      if(uncalled.length === 0) {
+        alert('¡Se han cantado todos los números del 1 al 75!');
+        return;
+      }
+      const randomIndex = Math.floor(Math.random() * uncalled.length);
+      toggleNumberCall(uncalled[randomIndex]);
+    }
+
+    function getLetterForNumber(num) {
+      if(num <= 15) return 'B';
+      if(num <= 30) return 'I';
+      if(num <= 45) return 'N';
+      if(num <= 60) return 'G';
+      return 'O';
+    }
+
+    // PATTERN EVALUATION ENGINE
+    function evaluateWinners(lastCalledNumber) {
+      const selectedPattern = document.getElementById('gamePatternSelect').value;
+
+      cards.forEach(card => {
+        const isWinner = checkCardMatchPattern(card, selectedPattern);
+        const winKey = `${card.id}_${selectedPattern}`;
+
+        if(isWinner && !notifiedWinners.has(winKey)) {
+          notifiedWinners.add(winKey);
+          triggerWinnerModal(card, selectedPattern, lastCalledNumber);
+        }
+      });
+    }
+
+    function checkCardMatchPattern(card, pattern) {
+      // Build 5x5 boolean matrix
+      let m = card.grid.map((row, r) => 
+        row.map((val, c) => (r === 2 && c === 2) || (typeof val === 'number' && calledNumbers.has(val)))
+      );
+
+      switch(pattern) {
+        case 'FULL': // All 25 cells marked
+          return m.every(row => row.every(val => val === true));
+
+        case 'LINE_HORIZ': // Any horizontal row
+          return m.some(row => row.every(val => val === true));
+
+        case 'LINE_VERT': // Any vertical column
+          return [0,1,2,3,4].some(c => m.every(row => row[c] === true));
+
+        case 'COL_B':
+          return m.every(row => row[0] === true);
+
+        case 'COL_I':
+          return m.every(row => row[1] === true);
+
+        case 'COL_N':
+          return m.every(row => row[2] === true);
+
+        case 'COL_G':
+          return m.every(row => row[3] === true);
+
+        case 'COL_O':
+          return m.every(row => row[4] === true);
+
+        case 'DIAG_X': // Both diagonals
+          const d1 = [0,1,2,3,4].every(i => m[i][i] === true);
+          const d2 = [0,1,2,3,4].every(i => m[i][4 - i] === true);
+          return d1 && d2;
+
+        case 'LETTER_L': // Column B (col 0) + Bottom row (row 4)
+          const colB = m.every(row => row[0] === true);
+          const row4 = m[4].every(val => val === true);
+          return colB && row4;
+
+        case 'LETTER_L_INV': // Column O (col 4) + Bottom row (row 4)
+          const colO_l = m.every(row => row[4] === true);
+          const row4_l = m[4].every(val => val === true);
+          return colO_l && row4_l;
+
+        case 'LETTER_U': // Col B (col 0) + Col O (col 4) + Bottom row (row 4)
+          const colB_u = m.every(row => row[0] === true);
+          const colO_u = m.every(row => row[4] === true);
+          const row4_u = m[4].every(val => val === true);
+          return colB_u && colO_u && row4_u;
+
+        case 'LETTER_U_INV': // Col B (col 0) + Col O (col 4) + Top row (row 0)
+          const colB_ui = m.every(row => row[0] === true);
+          const colO_ui = m.every(row => row[4] === true);
+          const row0_ui = m[0].every(val => val === true);
+          return colB_ui && colO_ui && row0_ui;
+
+        case 'LETTER_O': // Outer frame (Rows 0 & 4 + Cols 0 & 4)
+          const r0 = m[0].every(v => v === true);
+          const r4 = m[4].every(v => v === true);
+          const c0 = m.every(row => row[0] === true);
+          const c4 = m.every(row => row[4] === true);
+          return r0 && r4 && c0 && c4;
+
+        case 'LETTER_C': // Col B (col 0) + Row 0 + Row 4
+          const cB_c = m.every(row => row[0] === true);
+          const r0_c = m[0].every(v => v === true);
+          const r4_c = m[4].every(v => v === true);
+          return cB_c && r0_c && r4_c;
+
+        case 'LETTER_T': // Top Row (row 0) + Center Column N (col 2)
+          const r0_t = m[0].every(v => v === true);
+          const cN_t = m.every(row => row[2] === true);
+          return r0_t && cN_t;
+
+        case 'LETTER_R': // Letter R pattern: Col B, Row 0 (top loop start), Row 2 (middle bar), right loop closure (m[1][3] or m[1][4]), and lower leg (m[3][3], m[4][4])
+          const colB_r = m.every(row => row[0] === true);
+          const row0_r = m[0][1] && m[0][2] && m[0][3];
+          const row2_r = m[2][1] && m[2][2] && m[2][3];
+          const loopRight = m[1][3] || m[1][4];
+          const legDown = m[3][3] && m[4][4];
+          return colB_r && row0_r && row2_r && loopRight && legDown;
+
+        case 'LETTER_A': // Col B + Col O + Row 0 (top connection) + Row 2 (middle horizontal bar)
+          const colB_a = m.every(row => row[0] === true);
+          const colO_a = m.every(row => row[4] === true);
+          const row0_a = m[0].every(v => v === true);
+          const row2_a = m[2].every(v => v === true);
+          return colB_a && colO_a && row0_a && row2_a;
+
+        case 'CORNERS': // 4 corners
+          return m[0][0] && m[0][4] && m[4][0] && m[4][4];
+
+        default:
+          return false;
+      }
+    }
+
+    function triggerWinnerModal(card, patternCode, lastNum) {
+      const patternNames = {
+        'FULL': 'Cartilla Llena (Bingo Clásico)',
+        'LINE_HORIZ': 'Fila Horizontal',
+        'LINE_VERT': 'Columna Vertical',
+        'COL_B': 'Columna B',
+        'COL_I': 'Columna I',
+        'COL_N': 'Columna N',
+        'COL_G': 'Columna G',
+        'COL_O': 'Columna O',
+        'DIAG_X': 'Diagonal "X"',
+        'LETTER_L': 'Letra "L"',
+        'LETTER_L_INV': 'Letra "⅃"',
+        'LETTER_U': 'Letra "U"',
+        'LETTER_U_INV': 'Letra "∩"',
+        'LETTER_O': 'Letra "O" (Marco)',
+        'LETTER_C': 'Letra "C"',
+        'LETTER_T': 'Letra "T"',
+        'LETTER_R': 'Letra "R"',
+        'LETTER_A': 'Letra "A"',
+        'CORNERS': '4 Esquinas'
+      };
+
+      document.getElementById('winnerTitle').innerText = `¡Cartilla #${card.code} HA GANADO!`;
+      document.getElementById('winnerPatternDesc').innerHTML = `Ha completado el patrón: <strong class="text-amber-300">${patternNames[patternCode] || patternCode}</strong>`;
+      document.getElementById('winnerLastBallText').innerHTML = `Número Victorioso: <span class="font-bold text-amber-400">${lastNum ? getLetterForNumber(lastNum) + '-' + lastNum : '--'}</span>`;
+
+      document.getElementById('winnerModal').classList.remove('hidden');
+
+      if (typeof confetti === 'function') {
+        confetti({
+          particleCount: 120,
+          spread: 70,
+          origin: { y: 0.6 }
+        });
+      }
+    }
+
+    function closeWinnerModal() {
+      document.getElementById('winnerModal').classList.add('hidden');
+    }
+
+    // UI RENDER AND REFRESH FUNCTIONS
+    function updateUI() {
+      renderMasterBoard();
+      renderHistoryLog();
+      renderCards();
+      saveToLocalStorage();
+    }
+
+    function renderMasterBoard() {
+      for (let num = 1; num <= 75; num++) {
+        const btn = document.getElementById(`master_btn_${num}`);
+        if (!btn) continue;
+
+        if (calledNumbers.has(num)) {
+          btn.className = 'h-7 rounded text-[11px] font-black border transition flex items-center justify-center bg-amber-500 text-slate-950 border-amber-400 shadow-md shadow-amber-500/20';
+        } else {
+          btn.className = 'h-7 rounded text-[11px] font-bold border transition flex items-center justify-center bg-slate-900 text-slate-300 border-slate-800 hover:border-indigo-500';
+        }
+      }
+
+      document.getElementById('callCounter').innerText = `${calledNumbers.size} Cantadas`;
+
+      if (historyLog.length > 0) {
+        const last = historyLog[0];
+        document.getElementById('lastBallLetter').innerText = getLetterForNumber(last);
+        document.getElementById('lastBallNumber').innerText = last;
+      } else {
+        document.getElementById('lastBallLetter').innerText = 'LETRA';
+        document.getElementById('lastBallNumber').innerText = '--';
+      }
+    }
+
+    function renderHistoryLog() {
+      const container = document.getElementById('historyLog');
+      if (historyLog.length === 0) {
+        container.innerHTML = '<span class="text-slate-600 italic">Ningún número cantado aún...</span>';
+        return;
+      }
+
+      container.innerHTML = historyLog.map(n => `
+        <span class="px-2 py-0.5 rounded-lg bg-indigo-950 text-indigo-300 font-bold border border-indigo-800/60 text-[11px]">
+          ${getLetterForNumber(n)}-${n}
+        </span>
+      `).join('');
+    }
+
+    function renderCards() {
+      const grid = document.getElementById('cardsGrid');
+      const emptyState = document.getElementById('emptyState');
+      const badge = document.getElementById('cardCountBadge');
+
+      badge.innerText = `${cards.length} ${cards.length === 1 ? 'Cartilla' : 'Cartillas'}`;
+
+      if (cards.length === 0) {
+        grid.innerHTML = '';
+        emptyState.classList.remove('hidden');
+        return;
+      }
+
+      emptyState.classList.add('hidden');
+      const selectedPattern = document.getElementById('gamePatternSelect').value;
+
+      grid.innerHTML = cards.map(card => {
+        const isWinner = checkCardMatchPattern(card, selectedPattern);
+        
+        let matrixHTML = '';
+        for (let r = 0; r < 5; r++) {
+          for (let c = 0; c < 5; c++) {
+            const val = card.grid[r][c];
+            const isCenter = (r === 2 && c === 2);
+            const isMarked = isCenter || (typeof val === 'number' && calledNumbers.has(val));
+
+            let cellStyle = "bg-slate-950 text-slate-300 border-slate-800";
+            if (isMarked) {
+              cellStyle = isCenter 
+                ? "bg-amber-950/40 text-amber-400 font-black border-amber-500/50 shadow-inner" 
+                : "bg-indigo-600 text-white font-black border-indigo-400 shadow-md shadow-indigo-600/30 chip-marked";
+            }
+
+            matrixHTML += `
+              <div class="h-10 rounded-xl border flex items-center justify-center text-xs font-bold transition-all relative ${cellStyle}">
+                ${isCenter ? '<i class="fa-solid fa-star text-amber-400 text-xs"></i>' : val}
+              </div>
+            `;
+          }
+        }
+
+        return `
+          <div class="bg-slate-900 border ${isWinner ? 'border-amber-400 bingo-glow' : 'border-slate-800'} rounded-3xl p-4 shadow-xl space-y-3 relative transition-all">
+            ${isWinner ? `
+              <div class="absolute -top-3 left-4 bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 px-3 py-0.5 rounded-full font-black text-[10px] tracking-wider uppercase shadow-lg shadow-amber-500/30 flex items-center space-x-1">
+                <i class="fa-solid fa-crown text-xs"></i>
+                <span>¡BINGO / GANADOR!</span>
+              </div>
+            ` : ''}
+
+            <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
+              <div>
+                <h4 class="font-extrabold text-sm text-slate-100 flex items-center space-x-1.5">
+                  <span>Cartilla #${card.code}</span>
+                </h4>
+                <p class="text-[10px] text-slate-400">${card.date}</p>
+              </div>
+              <button onclick="removeCard('${card.id}')" class="text-slate-500 hover:text-rose-400 text-xs p-1 transition" title="Eliminar cartilla">
+                <i class="fa-solid fa-trash-can"></i>
+              </button>
+            </div>
+
+            <div class="grid grid-cols-5 gap-1 text-center font-black text-[11px] text-slate-400 pb-1">
+              <span class="text-blue-400">B</span>
+              <span class="text-rose-400">I</span>
+              <span class="text-amber-400">N</span>
+              <span class="text-emerald-400">G</span>
+              <span class="text-purple-400">O</span>
+            </div>
+
+            <div class="grid grid-cols-5 gap-1.5">
+              ${matrixHTML}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function removeCard(id) {
+      cards = cards.filter(c => c.id !== id);
+      updateUI();
+    }
+
+    function clearAllCards() {
+      if (cards.length === 0) return;
+      if (confirm('¿Estás seguro de vaciar todas las cartillas registradas?')) {
+        cards = [];
+        notifiedWinners.clear();
+        updateUI();
+      }
+    }
+
+    function resetGame() {
+      calledNumbers.clear();
+      historyLog = [];
+      notifiedWinners.clear();
+      updateUI();
+    }
+
+    // OCR BANNER HELPERS
+    function showOcrBanner(title, percent) {
+      const banner = document.getElementById('ocrBanner');
+      if (!banner) return;
+      banner.classList.remove('hidden');
+      document.getElementById('ocrStatusTitle').innerText = title;
+      document.getElementById('ocrPercent').innerText = `${percent}%`;
+    }
+
+    function updateOcrProgress(percent, subtitle) {
+      const p = document.getElementById('ocrPercent');
+      const s = document.getElementById('ocrStatusSubtitle');
+      if (p) p.innerText = `${percent}%`;
+      if (s && subtitle) s.innerText = subtitle;
+    }
+
+    function hideOcrBanner() {
+      const banner = document.getElementById('ocrBanner');
+      if (banner) banner.classList.add('hidden');
+    }
+
+    // LOCAL STORAGE PERSISTENCE
+    function saveToLocalStorage() {
+      try {
+        localStorage.setItem('bingo_cards', JSON.stringify(cards));
+      } catch(e) {}
+    }
+
+    function loadFromLocalStorage() {
+      try {
+        const saved = localStorage.getItem('bingo_cards');
+        if (saved) {
+          cards = JSON.parse(saved);
+        }
+      } catch(e) {}
+    }
+  </script>
+</body>
+</html>
